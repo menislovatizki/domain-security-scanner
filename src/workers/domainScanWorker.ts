@@ -1,5 +1,5 @@
 import { rabbitmqService } from '../services/rabbitmqService';
-import { processDomainScan } from '../services/cronService';
+import { processDomainScan } from '../services/databaseService';
 
 async function startWorker() {
   await rabbitmqService.connect();

@@ -1,10 +1,8 @@
 import { DataSource } from "typeorm";
 import {
   Domain,
-  WhoisRecord,
   DomainAnalysis,
-  ApiRequest,
-  UserDomainAuthorization,
+  RequestLog,
 } from "./entities/Entities";
 
 export const AppDataSource = new DataSource({
@@ -16,7 +14,7 @@ export const AppDataSource = new DataSource({
   database: process.env.POSTGRES_DB || "domainscanner",
   synchronize: false,
   logging: true,
-  entities: [Domain, WhoisRecord, DomainAnalysis, ApiRequest, UserDomainAuthorization],
+  entities: [Domain, DomainAnalysis, RequestLog],
   migrations: ["dist/migrations/*.js"],
   subscribers: [],
 });

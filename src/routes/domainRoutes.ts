@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Domain } from "../entities/Entities";
+import { Domain, DomainAnalysis } from "../entities/Entities";
 import { findOrCreateDomain } from "../services/databaseService";
 import { getDatabaseConnection } from "../utils/connectionManager";
 import { validateAndParseDomain } from "../services/parserService";
@@ -7,47 +7,55 @@ import { rabbitmqService } from "../services/rabbitmqService";
 
 const router = Router();
 
-router.get("/:domain", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
-    const { domain } = req.params;
-    if (!domain) {
+    const { url } = req.query;
+    if (!url) {
       return res.status(400).json({ error: "Domain name is required" });
     }
-    const parsedDomain = validateAndParseDomain(domain);
+    const {domain, valid} = validateAndParseDomain(url as string);
     
-    if (!parsedDomain) {
+    if (!valid || domain === null) {
       return res.status(400).json({ error: "Invalid domain URL" });
     }
-    const { fullDomain } = parsedDomain;
+
     const dataSource = await getDatabaseConnection();
     const domainRepo = dataSource.getRepository(Domain);
+    const analysisRepo = dataSource.getRepository(DomainAnalysis);
 
     let domainObj = await domainRepo.findOne({
-      where: { domainName: fullDomain },
-      relations: ["whoisRecords", "analyses"],
+      where: { domainName: domain },
+      relations: ["analyses"],
     });
 
     if (!domainObj) {
-      return res.status(404).json({ error: "Domain not found" });
+      // If domain doesn't exist, return a message saying it doesn't exist
+      return res.status(404).json({ message: "Domain not found in our database." });
     }
 
-    const shouldRescan = domainObj.analyses.length === 0 ||
-                         Date.now() - domainObj.updatedAt.getTime() > 24 * 60 * 60 * 1000; // 24 hours
+    const latestAnalysis = await analysisRepo.find({
+      where: { domain: domainObj },
+      order: { analysisDate: "DESC" },
+      take: 1,
+    });
+
+    if (latestAnalysis.length === 0) {
+      // If domain exists but has no analysis, queue for scanning
+      await rabbitmqService.sendToQueue('domain-scan', JSON.stringify({ domain }));
+      return res.json({ message: "Domain queued for initial scanning. Check back later for results.", domain: domainObj });
+    }
+
+    const shouldRescan = Date.now() - latestAnalysis[0].analysisDate.getTime() > 24 * 60 * 60 * 1000; // 24 hours
 
     if (shouldRescan) {
-      await rabbitmqService.sendToQueue('domain-scan', JSON.stringify({ domain: fullDomain }));
-      
-      if (domainObj.analyses.length === 0) {
-        return res.json({ message: "Domain queued for initial scanning. Check back later for results." });
-      } else {
-        return res.json({
-          message: "Domain queued for rescanning. Returning last known results.",
-          data: domainObj
-        });
-      }
+      await rabbitmqService.sendToQueue('domain-scan', JSON.stringify({ domain }));
+      return res.json({
+        message: "Domain queued for rescanning. Returning last known results.",
+        data: { domain: domainObj, latestAnalysis: latestAnalysis[0] }
+      });
     }
 
-    res.json(domainObj);
+    res.json({ domain: domainObj, latestAnalysis: latestAnalysis[0] });
   } catch (error: any) {
     res.status(500).json({ error: error.message ?? "unknown error" });
   }
@@ -55,28 +63,26 @@ router.get("/:domain", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { domain } = req.body;
-    if (!domain) {
+    const { url } = req.body;
+    if (!url) {
       return res.status(400).json({ error: "Domain name is required" });
     }
-    const parsedDomain = validateAndParseDomain(domain);
+    const {domain, parentDomain, valid} = validateAndParseDomain(url);
     
-    if (!parsedDomain) {
+    if (!valid || domain === null) {
       return res.status(400).json({ error: "Invalid domain URL" });
     }
-    const { fullDomain, sourceDomain } = parsedDomain;
-    const dataSource = await getDatabaseConnection();
-    let domainObj: Domain = await findOrCreateDomain(fullDomain, sourceDomain);
-    
+
+    let domainObj = await findOrCreateDomain(domain, parentDomain);
+
     // Queue the domain for scanning
     await rabbitmqService.sendToQueue('domain-scan', JSON.stringify({ domain }));
     
-    res.json({ message: "Domain added to scanning queue." });
+    res.json({ message: "Domain added to scanning queue.", domain: domainObj });
   } catch (error: any) {
     console.error("Error in endpoint /:", error);
     res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
-
 
 export default router;

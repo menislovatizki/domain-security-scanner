@@ -23,9 +23,6 @@ export class Domain {
     @UpdateDateColumn()
     updatedAt: Date;
 
-    @OneToMany(() => WhoisRecord, whoisRecord => whoisRecord.domain)
-    whoisRecords: WhoisRecord[];
-
     @OneToMany(() => DomainAnalysis, analysis => analysis.domain)
     analyses: DomainAnalysis[];
 
@@ -33,35 +30,8 @@ export class Domain {
         type: "enum",
         enum: ["pending", "in_progress", "completed", "failed"],
         default: "pending"
-      })
-      analysisStatus: "pending" | "in_progress" | "completed" | "failed";
-}
-
-@Entity()
-export class WhoisRecord {
-    @PrimaryGeneratedColumn()
-    id: number;
-
-    @ManyToOne(() => Domain, domain => domain.whoisRecords)
-    domain: Domain;
-
-    @Column({ type: 'jsonb' })
-    rawData: object;
-
-    @Column({ nullable: true })
-    registrar: string;
-
-    @Column({ type: 'timestamp', nullable: true })
-    creationDate: Date;
-
-    @Column({ type: 'timestamp', nullable: true })
-    expirationDate: Date;
-
-    @Column({ type: 'timestamp', nullable: true })
-    lastUpdateDate: Date;
-
-    @CreateDateColumn()
-    recordedAt: Date;
+    })
+    analysisStatus: "pending" | "in_progress" | "completed" | "failed";
 }
 
 @Entity()
@@ -73,7 +43,7 @@ export class DomainAnalysis {
     domain: Domain;
 
     @Column()
-    analysisType: string; // e.g., 'virustotal', 'other_future_analysis'
+    analysisType: string; // e.g., 'virustotal', 'whois'
 
     @Column({ type: 'jsonb' })
     rawData: object;
@@ -92,40 +62,19 @@ export class DomainAnalysis {
 }
 
 @Entity()
-export class ApiRequest {
+export class RequestLog {
     @PrimaryGeneratedColumn()
     id: number;
 
     @Column()
-    apiType: string; // 'whois', 'virustotal', etc.
+    requestType: string; // 'scan', 'analysis', etc.
 
     @Column()
     domainName: string;
 
     @Column({ type: 'jsonb', nullable: true })
-    response: object;
-
-    @Column({ nullable: true })
-    errorMessage: string;
+    requestData: object;
 
     @CreateDateColumn()
     requestedAt: Date;
-}
-
-@Entity()
-export class UserDomainAuthorization {
-    @PrimaryGeneratedColumn()
-    id: number;
-
-    @Column()
-    userId: number; // Assuming you have a separate User table
-
-    @ManyToOne(() => Domain)
-    domain: Domain;
-
-    @Column()
-    permissionLevel: string; // e.g., 'read', 'write', 'admin'
-
-    @CreateDateColumn()
-    grantedAt: Date;
 }

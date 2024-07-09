@@ -1,10 +1,7 @@
 import cron from "node-cron";
 import { config } from "../config/config";
-import { Domain, DomainAnalysis } from "../entities/Entities";
+import { Domain } from "../entities/Entities";
 import { getDatabaseConnection } from "../utils/connectionManager";
-import { getVirusTotalInfo, getWhoisInfo } from "./apiService";
-import { parseVirusTotalInfo, parseWhoisInfo } from "./parserService";
-import { updateDomainInfo } from "./databaseService";
 import { rabbitmqService } from "./rabbitmqService";
 import { LessThan } from "typeorm";
 
@@ -41,36 +38,3 @@ const enqueueDomainScan = async (domainName: string) => {
   console.log(`Enqueued scan for domain: ${domainName}`);
 };
 
-export const processDomainScan = async (domainName: string) => {
-  const dataSource = await getDatabaseConnection();
-  const domainRepo = dataSource.getRepository(Domain);
-  const analysisRepo = dataSource.getRepository(DomainAnalysis);
-
-  const domain = await domainRepo.findOne({ where: { domainName } });
-  if (!domain) {
-    console.error(`Domain ${domainName} not found in database`);
-    return;
-  }
-
-  try {
-    domain.analysisStatus = "in_progress";
-    await domainRepo.save(domain);
-
-    const virusTotalInfo = await getVirusTotalInfo(domainName);
-    const whoisInfo = await getWhoisInfo(domainName);
-
-    const parsedVirusTotalInfo = parseVirusTotalInfo(virusTotalInfo);
-    const parsedWhoisInfo = parseWhoisInfo(whoisInfo);
-
-    await updateDomainInfo(domain, parsedVirusTotalInfo, parsedWhoisInfo);
-
-    domain.analysisStatus = "completed";
-    await domainRepo.save(domain);
-
-    console.log(`Scan completed for domain: ${domainName}`);
-  } catch (error) {
-    console.error(`Error processing domain scan for ${domainName}:`, error);
-    domain.analysisStatus = "failed";
-    await domainRepo.save(domain);
-  }
-};

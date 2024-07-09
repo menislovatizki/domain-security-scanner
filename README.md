@@ -1,1 +1,0 @@
-# domain-security-scanner

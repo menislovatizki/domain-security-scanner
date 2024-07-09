@@ -1,44 +1,53 @@
-type ParsedDomain = {
-  fullDomain: string;
-  sourceDomain: string;
-};
+import { URL } from 'url';
 
-export const validateAndParseDomain = (url: string): ParsedDomain | null => {
+interface DomainInfo {
+  valid: boolean;
+  domain: string | null;
+  parentDomain: string | null;
+}
+
+export const validateAndParseDomain = (input: string): DomainInfo => {
+  let url: URL;
+
   try {
-    // Normalize the URL by adding a scheme if it's missing
-    const normalizedUrl = url.startsWith('http://') || url.startsWith('https://')
-      ? url
-      : `http://${url}`;
-    
-    const urlObj = new URL(normalizedUrl);
-
-    // Validate if it's a valid domain URL
-    const hostname = urlObj.hostname;
-    if (!hostname) {
-      return null;
+    // If the input doesn't start with a protocol, prepend 'http://'
+    if (!/^[a-zA-Z]+:\/\//.test(input)) {
+      input = 'http://' + input;
     }
-
-    // Remove www if present
-    let sourceDomain = hostname.replace(/^www\./, '');
-
-    // Extract the base domain
-    const domainParts = sourceDomain.split('.');
-    if (domainParts.length > 2) {
-      sourceDomain = domainParts.slice(-2).join('.');
-    }
-
-    // Construct fullDomain including subdomain (if any) and path
-    const fullDomain = urlObj.hostname + urlObj.pathname;
-
-    return {
-      fullDomain: fullDomain.endsWith('/') ? fullDomain.slice(0, -1) : fullDomain,
-      sourceDomain: sourceDomain,
-    };
+    url = new URL(input);
   } catch (error) {
-    console.error('Error parsing domain:', error);
-    return null;
+    return { valid: false, domain: null, parentDomain: null };
   }
-};
+
+  // Extract the hostname
+  let hostname = url.hostname;
+
+  // Remove 'www.' if present
+  hostname = hostname.replace(/^www\./, '');
+
+  // Validate the hostname
+  if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(hostname)) {
+    return { valid: false, domain: null, parentDomain: null };
+  }
+
+  // Construct the domain with the correct protocol and path
+  let domain = `${url.protocol}//${hostname}`;
+  if (url.pathname !== '/') {
+    // Remove trailing slash if it exists and add the path
+    domain += url.pathname.replace(/\/$/, '');
+  }
+
+  // Extract the parent domain (last two parts of the hostname)
+  const hostnameParts = hostname.split('.');
+  const parentDomain = hostnameParts.slice(-2).join('.');
+
+  return {
+    valid: true,
+    domain: domain,
+    parentDomain: `${url.protocol}//${parentDomain}`
+  };
+}
+
 export const parseVirusTotalInfo : any = (data: any) => {
       // Implement parsing logic for VirusTotal data
       return data;

@@ -1,13 +1,11 @@
-import { parseVirusTotalInfo, parseWhoisInfo } from "./parserService";
+import { parseVirusTotalInfo, parseWhoisInfo, validateAndParseDomain } from "./parserService";
 import { getVirusTotalInfo, getWhoisInfo } from "../services/apiService";
 import {
   Domain,
-  ApiRequest,
   DomainAnalysis,
-  WhoisRecord,
+  RequestLog,
 } from "../entities/Entities";
 import { getDatabaseConnection } from "../utils/connectionManager";
-import { ApiEnum } from "../config/config";
 
 export async function findOrCreateDomain(
   name: string,
@@ -15,12 +13,12 @@ export async function findOrCreateDomain(
 ): Promise<Domain> {
   const dataSource = await getDatabaseConnection();
   const domainRepo = dataSource.getRepository(Domain);
-  
+
   let domain = await domainRepo.findOne({ where: { domainName: name } });
-  
+
   if (!domain) {
     let parentDomain: Domain | null = null;
-    
+
     if (sourceDomain) {
       parentDomain = await domainRepo.findOne({ where: { domainName: sourceDomain } });
       if (!parentDomain) {
@@ -33,69 +31,71 @@ export async function findOrCreateDomain(
       parentDomain: parentDomain,
       tld: name.split(".").pop(),
     });
-    
+
     await domainRepo.save(domain);
   }
-  
+
   return domain;
 }
 
-async function logApiRequest(
-  apiType: ApiEnum,
+async function logRequest(
+  requestType: string,
   domainName: string,
-  response: any,
-  error?: string
+  requestData: any
 ) {
   const dataSource = await getDatabaseConnection();
-  const apiRequestRepo = dataSource.getRepository(ApiRequest);
-  const apiRequest = apiRequestRepo.create({
-    apiType,
+  const requestLogRepo = dataSource.getRepository(RequestLog);
+  const requestLog = requestLogRepo.create({
+    requestType,
     domainName,
-    response,
-    errorMessage: error,
+    requestData,
   });
-  await apiRequestRepo.save(apiRequest);
+  await requestLogRepo.save(requestLog);
 }
 
-export async function scanDomain(name: string) {
-  console.log("Start scanning for: ", name);
+export const processDomainScan = async (domainName: string) => {
+  const dataSource = await getDatabaseConnection();
+  const domainRepo = dataSource.getRepository(Domain);
+  const analysisRepo = dataSource.getRepository(DomainAnalysis);
 
-  let virusTotalInfo, whoisInfo; // Add more API's here
-
-  try {
-    virusTotalInfo = await getVirusTotalInfo(name);
-    await logApiRequest(ApiEnum.VIRUSTOTAL, name, virusTotalInfo);
-  } catch (error: any) {
-    await logApiRequest(
-      ApiEnum.VIRUSTOTAL,
-      name,
-      null,
-      error.message ?? "unknown error"
-    );
+  const domainData = await domainRepo.findOne({ where: { domainName } });
+  if (!domainData) {
+    console.error(`Domain ${domainName} not found in database`);
+    return;
   }
 
   try {
-    whoisInfo = await getWhoisInfo(name);
-    await logApiRequest(ApiEnum.WHOIS, name, whoisInfo);
-  } catch (error: any) {
-    await logApiRequest(
-      ApiEnum.WHOIS,
-      name,
-      null,
-      error.message ?? "unknown error"
-    );
+    domainData.analysisStatus = "in_progress";
+    await domainRepo.save(domainData);
+
+    const {domain, parentDomain, valid} = validateAndParseDomain(domainName);
+    if (!valid || domain === null) {
+      throw new Error("Invalid URL");
+    }
+
+    // Log the scan request
+    await logRequest('scan', domain, { parentDomain });
+
+    const virusTotalInfo = await getVirusTotalInfo(domain);
+    const whoisInfo = await getWhoisInfo(domain);
+
+    const parsedVirusTotalInfo = parseVirusTotalInfo(virusTotalInfo);
+    const parsedWhoisInfo = parseWhoisInfo(whoisInfo);
+
+    await updateDomainAnalysis(domainData, parsedVirusTotalInfo, parsedWhoisInfo);
+
+    domainData.analysisStatus = "completed";
+    await domainRepo.save(domainData);
+
+    console.log(`Scan completed for domain: ${domainName}`);
+  } catch (error) {
+    console.error(`Error processing domain scan for ${domainName}:`, error);
+    domainData.analysisStatus = "failed";
+    await domainRepo.save(domainData);
   }
+};
 
-  // Add more API's here
-
-  return {
-    virusTotalInfo: parseVirusTotalInfo(virusTotalInfo),
-    whoisInfo: parseWhoisInfo(whoisInfo),
-    // Add more API's here
-  };
-}
-
-export async function updateDomainInfo(
+export async function updateDomainAnalysis(
   domain: Domain,
   virusTotalInfo: any,
   whoisInfo: any
@@ -104,27 +104,24 @@ export async function updateDomainInfo(
 
   await dataSource.manager.transaction(async (transactionalEntityManager) => {
     if (whoisInfo) {
-      const whoisRecord = new WhoisRecord();
-      whoisRecord.domain = domain;
-      whoisRecord.rawData = whoisInfo;
-      whoisRecord.registrar = whoisInfo.registrar;
-      whoisRecord.creationDate = whoisInfo.creationDate;
-      whoisRecord.expirationDate = whoisInfo.expirationDate;
-      whoisRecord.lastUpdateDate = whoisInfo.lastUpdateDate;
-      await transactionalEntityManager.save(whoisRecord);
+      const whoisAnalysis = new DomainAnalysis();
+      whoisAnalysis.domain = domain;
+      whoisAnalysis.analysisType = "whois";
+      whoisAnalysis.rawData = whoisInfo;
+      whoisAnalysis.analysisDate = new Date();
+      await transactionalEntityManager.save(whoisAnalysis);
     }
 
     if (virusTotalInfo) {
-      const domainAnalysis = new DomainAnalysis();
-      domainAnalysis.domain = domain;
-      domainAnalysis.analysisType = "virustotal";
-      domainAnalysis.rawData = virusTotalInfo;
-      domainAnalysis.lastAnalysisStats = virusTotalInfo.last_analysis_stats;
-      domainAnalysis.reputation = virusTotalInfo.reputation;
-      domainAnalysis.analysisDate = new Date();
-      await transactionalEntityManager.save(domainAnalysis);
+      const virusTotalAnalysis = new DomainAnalysis();
+      virusTotalAnalysis.domain = domain;
+      virusTotalAnalysis.analysisType = "virustotal";
+      virusTotalAnalysis.rawData = virusTotalInfo;
+      virusTotalAnalysis.lastAnalysisStats = virusTotalInfo.last_analysis_stats;
+      virusTotalAnalysis.reputation = virusTotalInfo.reputation;
+      virusTotalAnalysis.analysisDate = new Date();
+      await transactionalEntityManager.save(virusTotalAnalysis);
     }
-    // Add more API's here
 
     domain.updatedAt = new Date();
     await transactionalEntityManager.save(domain);

@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=reflectiz
+      - POSTGRES_DB=domainscanner
+      - RABBITMQ_URL=amqp://rabbitmq
+    volumes:
+      - ./src:/usr/src/app/src
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=reflectiz
+      - POSTGRES_DB=domainscanner
+      - RABBITMQ_URL=amqp://rabbitmq
+    volumes:
+      - ./src:/usr/src/app/src
+    command: ["node", "dist/workers/domainScanWorker.js"]
+
+  postgres:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_DB: domainscanner
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: reflectiz
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d domainscanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    build:
+      context: ./docker/rabbitmq
+      dockerfile: Dockerfile
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+volumes:
+  postgres_data:

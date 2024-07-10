@@ -4,7 +4,7 @@ services:
   server:
     build:
       context: .
-      dockerfile: docker/server/Dockerfile
+      dockerfile: server/Dockerfile
     ports:
       - "3000:3000"
     depends_on:
@@ -26,7 +26,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: docker/server/Dockerfile
+      dockerfile: server/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
 
   postgres:
     build:
-      context: ./docker/postgres
+      context: ./postgres
       dockerfile: Dockerfile
     environment:
       POSTGRES_DB: domainscanner
@@ -64,7 +64,7 @@ services:
 
   rabbitmq:
     build:
-      context: ./docker/rabbitmq
+      context: ./rabbitmq
       dockerfile: Dockerfile
     ports:
       - "5672:5672"

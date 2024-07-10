@@ -2,9 +2,9 @@ FROM node:14
 
 WORKDIR /usr/src/app
 
-COPY package*.json ./
-
 RUN apt-get update && apt-get install -y postgresql-client
+
+COPY package*.json ./
 
 RUN npm install
 

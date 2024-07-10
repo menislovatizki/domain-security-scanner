@@ -1,19 +1,28 @@
 import app from "./app";
 import { config } from "./config/config";
-import { getDatabaseConnection } from "./utils/connectionManager";
-import { rabbitmqService } from "./services/rabbitmqService";
-import { startCronJobs } from "./services/cronService";
+import { getDatabaseConnection } from "./utils/databaseConnectionManager";
+import { initializeRabbitMQ } from "./utils/rabbitmqOperations";
+import { cronService } from "./services/cronService";
 
 const startServer = async () => {
   try {
-    await getDatabaseConnection();
-    console.log("Database connected successfully");
-    
-    await rabbitmqService.connect()
-    console.log("RabbitMQ connected successfully");
+    const initializationTasks = [
+      { name: 'Database', task: getDatabaseConnection },
+      { name: 'RabbitMQ', task: initializeRabbitMQ },
+      { name: 'Cron Service', task: () => cronService.initialize() }
+    ];
 
-    await startCronJobs();
-    console.log("Cron jobs is started successfully");
+    const results = await Promise.allSettled(initializationTasks.map(({ task }) => task()));
+
+    results.forEach((result, index) => {
+      const { name } = initializationTasks[index];
+      if (result.status === 'fulfilled') {
+        console.log(`${name} initialized successfully`);
+      } else {
+        console.error(`Failed to initialize ${name}:`, result.reason);
+        throw new Error(`Failed to initialize ${name}`);
+      }
+    });
 
     app.listen(config.port, () => {
       console.log(`Server is running on port ${config.port}`);

@@ -1,13 +1,9 @@
-import { parseVirusTotalInfo, parseWhoisInfo, validateAndParseDomain } from "./parserService";
-import { getVirusTotalInfo, getWhoisInfo } from "../services/apiService";
-import {
-  Domain,
-  DomainAnalysis,
-  RequestLog,
-} from "../entities/Entities";
-import { getDatabaseConnection } from "../utils/connectionManager";
+import { ApiEnum } from "../config/config";
+import { Domain, DomainAnalysis, RequestLog } from "../entities/Entities";
+import { getDatabaseConnection } from "../utils/databaseConnectionManager";
+import { EntityManager } from "typeorm";
 
-export async function findOrCreateDomain(
+export async function createDomain(
   name: string,
   sourceDomain?: string | null
 ): Promise<Domain> {
@@ -20,9 +16,11 @@ export async function findOrCreateDomain(
     let parentDomain: Domain | null = null;
 
     if (sourceDomain) {
-      parentDomain = await domainRepo.findOne({ where: { domainName: sourceDomain } });
+      parentDomain = await domainRepo.findOne({
+        where: { domainName: sourceDomain },
+      });
       if (!parentDomain) {
-        parentDomain = await findOrCreateDomain(sourceDomain);
+        parentDomain = await createDomain(sourceDomain);
       }
     }
 
@@ -38,7 +36,27 @@ export async function findOrCreateDomain(
   return domain;
 }
 
-async function logRequest(
+export async function getDomainAndLatestAnalysis(domain: string) {
+  const dataSource = await getDatabaseConnection();
+  const domainRepo = dataSource.getRepository(Domain);
+  const analysisRepo = dataSource.getRepository(DomainAnalysis);
+
+  const [domainObj, latestAnalysis] = await Promise.all([
+    domainRepo.findOne({
+      where: { domainName: domain },
+      relations: ["analyses"],
+    }),
+    analysisRepo.find({
+      where: { domain: { domainName: domain } },
+      order: { analysisDate: "DESC" },
+      take: 1,
+    }),
+  ]);
+
+  return { domainObj, latestAnalysis: latestAnalysis[0] };
+}
+
+export async function logRequest(
   requestType: string,
   domainName: string,
   requestData: any
@@ -53,79 +71,58 @@ async function logRequest(
   await requestLogRepo.save(requestLog);
 }
 
-export const processDomainScan = async (domainName: string) => {
-  const dataSource = await getDatabaseConnection();
-  const domainRepo = dataSource.getRepository(Domain);
-  const analysisRepo = dataSource.getRepository(DomainAnalysis);
-
-  const domainData = await domainRepo.findOne({ where: { domainName } });
-  if (!domainData) {
-    console.error(`Domain ${domainName} not found in database`);
-    return;
-  }
-
-  try {
-    domainData.analysisStatus = "in_progress";
-    await domainRepo.save(domainData);
-
-    const {domain, parentDomain, valid} = validateAndParseDomain(domainName);
-    if (!valid || domain === null) {
-      throw new Error("Invalid URL");
-    }
-
-    // Log the scan request
-    await logRequest('scan', domain, { parentDomain });
-
-    const virusTotalInfo = await getVirusTotalInfo(domain);
-    const whoisInfo = await getWhoisInfo(domain);
-
-    const parsedVirusTotalInfo = parseVirusTotalInfo(virusTotalInfo);
-    const parsedWhoisInfo = parseWhoisInfo(whoisInfo);
-
-    await updateDomainAnalysis(domainData, parsedVirusTotalInfo, parsedWhoisInfo);
-
-    domainData.analysisStatus = "completed";
-    await domainRepo.save(domainData);
-
-    console.log(`Scan completed for domain: ${domainName}`);
-  } catch (error) {
-    console.error(`Error processing domain scan for ${domainName}:`, error);
-    domainData.analysisStatus = "failed";
-    await domainRepo.save(domainData);
-  }
-};
-
 export async function updateDomainAnalysis(
   domain: Domain,
-  virusTotalInfo: any,
-  whoisInfo: any
-) {
+  analysisData: Partial<Record<ApiEnum, any>>
+): Promise<Domain> {
   const dataSource = await getDatabaseConnection();
 
-  await dataSource.manager.transaction(async (transactionalEntityManager) => {
-    if (whoisInfo) {
-      const whoisAnalysis = new DomainAnalysis();
-      whoisAnalysis.domain = domain;
-      whoisAnalysis.analysisType = "whois";
-      whoisAnalysis.rawData = whoisInfo;
-      whoisAnalysis.analysisDate = new Date();
-      await transactionalEntityManager.save(whoisAnalysis);
-    }
+  try {
+    await dataSource.manager.transaction(async (transactionalEntityManager) => {
+      const analysisPromises = Object.entries(analysisData).map(([type, data]) =>
+        saveAnalysis(transactionalEntityManager, domain, type as ApiEnum, data)
+      );
 
-    if (virusTotalInfo) {
-      const virusTotalAnalysis = new DomainAnalysis();
-      virusTotalAnalysis.domain = domain;
-      virusTotalAnalysis.analysisType = "virustotal";
-      virusTotalAnalysis.rawData = virusTotalInfo;
-      virusTotalAnalysis.lastAnalysisStats = virusTotalInfo.last_analysis_stats;
-      virusTotalAnalysis.reputation = virusTotalInfo.reputation;
-      virusTotalAnalysis.analysisDate = new Date();
-      await transactionalEntityManager.save(virusTotalAnalysis);
-    }
+      await Promise.allSettled(analysisPromises);
 
-    domain.updatedAt = new Date();
-    await transactionalEntityManager.save(domain);
+      domain.updatedAt = new Date();
+      await transactionalEntityManager.save(domain);
+    });
+
+    return domain;
+  } catch (error) {
+    console.error("Failed to update domain analysis", { error });
+    throw error;
+  }
+}
+
+async function saveAnalysis(
+  manager: EntityManager,
+  domain: Domain,
+  analysisType: ApiEnum,
+  rawData: any
+) {
+  const analysis = manager.create(DomainAnalysis, {
+    domain: domain,
+    analysisType: analysisType,
+    rawData: rawData,
+    analysisDate: new Date(),
   });
 
-  return domain;
+  switch (analysisType) {
+    case ApiEnum.VIRUSTOTAL:
+      const vtAttributes = rawData.data.attributes;
+      Object.assign(analysis, {
+        lastAnalysisStats: vtAttributes.last_analysis_stats,
+        reputation: vtAttributes.reputation,
+        vtLastAnalysisDate: new Date(vtAttributes.last_analysis_date * 1000),
+        vtPopularityRanks: vtAttributes.popularity_ranks,
+        vtCategories: vtAttributes.categories
+      });
+      break;
+    case ApiEnum.WHOIS:
+      break;
+  }
+
+  await manager.save(analysis);
 }

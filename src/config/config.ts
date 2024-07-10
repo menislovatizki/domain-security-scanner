@@ -34,9 +34,9 @@ type ApiConfigMap = {
   [key in ApiEnum]: ApiConfig;
 };
 
-export const apiConfig: ApiConfigMap = {
+export const apiConfig = (domainName: string) : ApiConfigMap => {return {
   [ApiEnum.VIRUSTOTAL]: {
-    url: 'https://www.virustotal.com/api/v3/domains/{domain}',
+    url: `https://www.virustotal.com/api/v3/domains/${domainName}`,
     headers: {
       'x-apikey': config.virusTotalApiKey as string,
     },
@@ -48,8 +48,8 @@ export const apiConfig: ApiConfigMap = {
     params: {
       apiKey: config.whoisApiKey as string,
       outputFormat: 'JSON',
-      domainName: '{domain}'
+      domainName: `${domainName}`
     }
   },
   // Add more APIs here
-};
+}};

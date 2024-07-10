@@ -8,8 +8,10 @@ interface DomainInfo {
 
 export const validateAndParseDomain = (input: string): DomainInfo => {
   let url: URL;
-
+  
   try {
+    input = decodeURIComponent(input.trim());
+    
     // If the input doesn't start with a protocol, prepend 'http://'
     if (!/^[a-zA-Z]+:\/\//.test(input)) {
       input = 'http://' + input;
@@ -19,42 +21,37 @@ export const validateAndParseDomain = (input: string): DomainInfo => {
     return { valid: false, domain: null, parentDomain: null };
   }
 
-  // Extract the hostname
-  let hostname = url.hostname;
-
+  let hostname = url.hostname.toLowerCase();
+  
   // Remove 'www.' if present
   hostname = hostname.replace(/^www\./, '');
-
+  
   // Validate the hostname
-  if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(hostname)) {
+  // Allow IDNs and subdomains
+  if (!/^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$/i.test(hostname)) {
     return { valid: false, domain: null, parentDomain: null };
   }
-
-  // Construct the domain with the correct protocol and path
-  let domain = `${url.protocol}//${hostname}`;
-  if (url.pathname !== '/') {
-    // Remove trailing slash if it exists and add the path
+  
+  let domain = hostname;
+  if (url.pathname !== '/' && url.pathname !== '') {
+    // Add the path, removing trailing slash if it exists
     domain += url.pathname.replace(/\/$/, '');
   }
-
-  // Extract the parent domain (last two parts of the hostname)
   const hostnameParts = hostname.split('.');
   const parentDomain = hostnameParts.slice(-2).join('.');
-
+  
   return {
     valid: true,
     domain: domain,
-    parentDomain: `${url.protocol}//${parentDomain}`
+    parentDomain: parentDomain
   };
 }
 
-export const parseVirusTotalInfo : any = (data: any) => {
-      // Implement parsing logic for VirusTotal data
-      return data;
+export const parseVirusTotalInfo = (rawData: any) => {
+      return rawData;
     }
   
-export const parseWhoisInfo : any = (data: any) => {
-      // Implement parsing logic for WHOIS data
-      return data;
+export const parseWhoisInfo = (rawData: any) => {
+      return rawData;
     }
   
